@@ -1,21 +1,16 @@
-# Dockerfile
 FROM php:8.2-apache
 
-# Instala extensões necessárias para MySQL (PDO, mysqli) e utilitários básicos
-RUN docker-php-ext-install pdo pdo_mysql mysqli
+# Extensões e mod_rewrite
+RUN docker-php-ext-install pdo pdo_mysql mysqli && a2enmod rewrite
 
-# Habilita o mod_rewrite (útil para frameworks)
-RUN a2enmod rewrite
+# Silenciar aviso de ServerName e garantir um DirectoryIndex
+RUN printf "ServerName localhost\n" > /etc/apache2/conf-available/servername.conf \
+ && a2enconf servername \
+ && printf "DirectoryIndex index.php index.html\n" > /etc/apache2/conf-available/dirindex.conf \
+ && a2enconf dirindex
 
-# Ajuste opcional do DocumentRoot (se quiser /var/www/html/public, descomente)
-# ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
-# RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/000-default.conf /etc/apache2/apache2.conf
-
-# Define timezone (opcional)
 ENV TZ=Europe/Lisbon
 
-# Copia o código (ou use volume no compose)
+# Copia a app para dentro da imagem
 COPY ./src /var/www/html
-
-# Permissões (opcional, depende do host)
 RUN chown -R www-data:www-data /var/www/html

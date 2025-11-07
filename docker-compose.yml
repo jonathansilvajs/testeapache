@@ -1,18 +1,21 @@
-# docker-compose.yml
 services:
   web:
-    build: .
-    container_name: php-apache-web
+    build:
+      context: .          # raiz onde estão Dockerfile e src/
+      dockerfile: Dockerfile
     ports:
-      - "8080:80"          # Acesse em http://localhost:8080
+      - "8080:80"
     environment:
-      # As variáveis abaixo são lidas pelo PHP no index.php
       DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT}
+      DB_PORT: ${DB_PORT:-3306}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASS: ${DB_PASS}
       TZ: ${TZ:-Europe/Lisbon}
-    volumes:
-      - ./src:/var/www/html:rw
     restart: unless-stopped
+    # (Opcional) healthcheck simples
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
