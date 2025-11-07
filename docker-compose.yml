@@ -5,39 +5,80 @@ services:
     restart: "no"
     environment:
       MYSQL_PWD: ${DB_ADMIN_PASS}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_ADMIN_USER: ${DB_ADMIN_USER}
+      CLONE_FROM_DB: ${CLONE_FROM_DB}
+      CLONE_TO_DB: ${CLONE_TO_DB}
+      CLONE_DB_USER: ${CLONE_DB_USER}
+      CLONE_DB_PASS: ${CLONE_DB_PASS}
+      # Opcional: se o servidor exigir TLS, defina VERIFY_IDENTITY/REQUIRED/NONE
+      MYSQL_SSL_MODE: ${MYSQL_SSL_MODE:-PREFERRED}
     volumes:
       - clone_status:/var/clone-status
     command: >
       sh -lc '
-        set -e
-        mkdir -p /var/clone-status
+        set -Eeuo pipefail
         LOG=/var/clone-status/clone.log
-
-        # redireciona stdout/stderr para o log também (além da saída normal)
+        OK=/var/clone-status/STATUS_SUCCESS
+        FAIL=/var/clone-status/STATUS_FAILED
+        rm -f "$OK" "$FAIL"
+        mkdir -p /var/clone-status
         exec > >(tee -a "$LOG") 2>&1
+        echo "==== DB CLONE START $(date -u +%Y-%m-%dT%H:%M:%SZ) ===="
+        echo "Host=${DB_HOST} Port=${DB_PORT} From=${CLONE_FROM_DB} To=${CLONE_TO_DB} UserNew=${CLONE_DB_USER}"
 
-        echo "==== DB CLONE START $(date -u +"%Y-%m-%dT%H:%M:%SZ") ===="
+        ssl=""
+        if [ -n "${MYSQL_SSL_MODE:-}" ]; then ssl="--ssl-mode=${MYSQL_SSL_MODE}"; fi
 
-        trap "echo \"STATUS=FAILED $(date -u +"%Y-%m-%dT%H:%M:%SZ")\"; exit 1" ERR
+        echo ">> Testando conectividade..."
+        if ! mysqladmin --protocol=TCP $ssl --connect-timeout=10 -h "$DB_HOST" -P "$DB_PORT" -u "$DB_ADMIN_USER" ping; then
+          echo "STATUS=FAILED (sem conectividade)" | tee "$FAIL"
+          echo "==== DB CLONE END ===="
+          exit 0
+        fi
 
-        echo ">> Criando BD \`${CLONE_TO_DB}\` e utilizador \`${CLONE_DB_USER}\`..."
-        mysql -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_ADMIN_USER}" -e "
+        # Se origem não existir, marcamos FAIL mas seguimos em frente
+        echo ">> Verificando existência da BD de origem..."
+        if ! mysql --protocol=TCP $ssl -h "$DB_HOST" -P "$DB_PORT" -u "$DB_ADMIN_USER" \
+             -N -B -e "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${CLONE_FROM_DB}'" | grep -q .; then
+          echo "STATUS=FAILED (origem '${CLONE_FROM_DB}' não encontrada)" | tee "$FAIL"
+          echo "==== DB CLONE END ===="
+          exit 0
+        fi
+
+        echo ">> Criando BD destino e utilizador (se necessário)..."
+        mysql --protocol=TCP $ssl -h "$DB_HOST" -P "$DB_PORT" -u "$DB_ADMIN_USER" -e "
           CREATE DATABASE IF NOT EXISTS \`${CLONE_TO_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
           CREATE USER IF NOT EXISTS \`${CLONE_DB_USER}\`@\`%\` IDENTIFIED BY '${CLONE_DB_PASS}';
           GRANT ALL PRIVILEGES ON \`${CLONE_TO_DB}\`.* TO \`${CLONE_DB_USER}\`@\`%\`;
           FLUSH PRIVILEGES;
         "
 
-        echo ">> A clonar de \`${CLONE_FROM_DB}\` para \`${CLONE_TO_DB}\`..."
-        mysqldump -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_ADMIN_USER}" \
+        echo ">> Clonando dados (tenta com rotinas/eventos; se falhar, tenta sem)..."
+        set +e
+        mysqldump --protocol=TCP $ssl -h "$DB_HOST" -P "$DB_PORT" -u "$DB_ADMIN_USER" \
           --single-transaction --routines --triggers --events \
-          --set-gtid-purged=OFF --column-statistics=0 \
-          "${CLONE_FROM_DB}" \
-        | mysql -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_ADMIN_USER}" "${CLONE_TO_DB}"
+          --set-gtid-purged=OFF --column-statistics=0 "${CLONE_FROM_DB}" \
+        | mysql --protocol=TCP $ssl -h "$DB_HOST" -P "$DB_PORT" -u "$DB_ADMIN_USER" "${CLONE_TO_DB}"
+        rc=$?
+        if [ $rc -ne 0 ]; then
+          echo "!! Falhou com rotinas/eventos (rc=$rc); tentando sem..."
+          mysqldump --protocol=TCP $ssl -h "$DB_HOST" -P "$DB_PORT" -u "$DB_ADMIN_USER" \
+            --single-transaction --triggers \
+            --set-gtid-purged=OFF --column-statistics=0 "${CLONE_FROM_DB}" \
+          | mysql --protocol=TCP $ssl -h "$DB_HOST" -P "$DB_PORT" -u "$DB_ADMIN_USER" "${CLONE_TO_DB}"
+          rc=$?
+        fi
+        set -e
 
-        echo ">> Clone concluído."
-        echo "STATUS=SUCCESS $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        if [ $rc -eq 0 ]; then
+          echo "STATUS=SUCCESS $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee "$OK"
+        else
+          echo "STATUS=FAILED dump/restore rc=$rc $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee "$FAIL"
+        fi
         echo "==== DB CLONE END ===="
+        exit 0
       '
 
   web:
@@ -54,11 +95,11 @@ services:
       DB_USER: ${CLONE_DB_USER}
       DB_PASS: ${CLONE_DB_PASS}
       TZ: ${TZ:-Europe/Lisbon}
+    # ⚠️ NÃO bloquear mais no sucesso do cloner
+    depends_on:
+      - db-cloner
     volumes:
       - clone_status:/var/clone-status:ro
-    depends_on:
-      db-cloner:
-        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
