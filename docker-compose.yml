@@ -1,21 +1,70 @@
 services:
+  db-cloner:
+    image: mysql:8
+    container_name: db-cloner-once
+    restart: "no"
+    environment:
+      MYSQL_PWD: ${DB_ADMIN_PASS}
+    volumes:
+      - clone_status:/var/clone-status
+    command: >
+      sh -lc '
+        set -e
+        mkdir -p /var/clone-status
+        LOG=/var/clone-status/clone.log
+
+        # redireciona stdout/stderr para o log também (além da saída normal)
+        exec > >(tee -a "$LOG") 2>&1
+
+        echo "==== DB CLONE START $(date -u +"%Y-%m-%dT%H:%M:%SZ") ===="
+
+        trap "echo \"STATUS=FAILED $(date -u +"%Y-%m-%dT%H:%M:%SZ")\"; exit 1" ERR
+
+        echo ">> Criando BD \`${CLONE_TO_DB}\` e utilizador \`${CLONE_DB_USER}\`..."
+        mysql -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_ADMIN_USER}" -e "
+          CREATE DATABASE IF NOT EXISTS \`${CLONE_TO_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+          CREATE USER IF NOT EXISTS \`${CLONE_DB_USER}\`@\`%\` IDENTIFIED BY '${CLONE_DB_PASS}';
+          GRANT ALL PRIVILEGES ON \`${CLONE_TO_DB}\`.* TO \`${CLONE_DB_USER}\`@\`%\`;
+          FLUSH PRIVILEGES;
+        "
+
+        echo ">> A clonar de \`${CLONE_FROM_DB}\` para \`${CLONE_TO_DB}\`..."
+        mysqldump -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_ADMIN_USER}" \
+          --single-transaction --routines --triggers --events \
+          --set-gtid-purged=OFF --column-statistics=0 \
+          "${CLONE_FROM_DB}" \
+        | mysql -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_ADMIN_USER}" "${CLONE_TO_DB}"
+
+        echo ">> Clone concluído."
+        echo "STATUS=SUCCESS $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        echo "==== DB CLONE END ===="
+      '
+
   web:
     build:
-      context: .          # raiz onde estão Dockerfile e src/
+      context: .
       dockerfile: Dockerfile
+    container_name: php-apache-web
     ports:
       - "8080:80"
     environment:
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT:-3306}
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASS: ${DB_PASS}
+      DB_NAME: ${CLONE_TO_DB}
+      DB_USER: ${CLONE_DB_USER}
+      DB_PASS: ${CLONE_DB_PASS}
       TZ: ${TZ:-Europe/Lisbon}
+    volumes:
+      - clone_status:/var/clone-status:ro
+    depends_on:
+      db-cloner:
+        condition: service_completed_successfully
     restart: unless-stopped
-    # (Opcional) healthcheck simples
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
       timeout: 5s
       retries: 3
+
+volumes:
+  clone_status:
