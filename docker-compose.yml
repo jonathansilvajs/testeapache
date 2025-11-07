@@ -1,21 +1,28 @@
 version: "3.9"
 
 services:
-  # --- Serviço que clona a base de dados uma única vez ---
+  # ---------- JOB: Clonar BD "somniacrm" ----------
   db-cloner:
     image: mysql:8
     container_name: db-cloner-once
     restart: "no"
     environment:
+      # Alvo MySQL (externo)
       MYSQL_PWD: ${DB_ADMIN_PASS}
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT:-3306}
       DB_ADMIN_USER: ${DB_ADMIN_USER}
+
+      # Origem e destino
       CLONE_FROM_DB: ${CLONE_FROM_DB}
       CLONE_TO_DB: ${CLONE_TO_DB}
+
+      # Novo utilizador da BD clonada
       CLONE_DB_USER: ${CLONE_DB_USER}
       CLONE_DB_PASS: ${CLONE_DB_PASS}
-      MYSQL_SSL_MODE: ${MYSQL_SSL_MODE:-}   # REQUIRED / VERIFY_IDENTITY / PREFERRED
+
+      # TLS (opcional): REQUIRED / VERIFY_IDENTITY / PREFERRED / vazio
+      MYSQL_SSL_MODE: ${MYSQL_SSL_MODE:-}
     volumes:
       - clone_status:/var/clone-status
     command: >
@@ -24,8 +31,11 @@ services:
         LOG=/var/clone-status/clone.log
         OK=/var/clone-status/STATUS_SUCCESS
         FAIL=/var/clone-status/STATUS_FAILED
-        mkdir -p /var/clone-status
-        : > "$LOG"; rm -f "$OK" "$FAIL"
+
+        # preparar diretório e log
+        mkdir -p /var/clone-status || true
+        rm -f "$OK" "$FAIL" 2>/dev/null || true
+        touch "$LOG" || { echo "STATUS=FAILED (não consegui criar $LOG)"; exit 0; }
 
         log(){ printf "%s\n" "$@" | tee -a "$LOG" ; }
 
@@ -40,9 +50,9 @@ services:
           log "STATUS=FAILED (sem conectividade)"; : > "$FAIL"; log "==== DB CLONE END ===="; exit 0
         fi
 
-        log ">> Verificando existência da BD de origem com mysqldump --no-data..."
+        log ">> Verificando origem com mysqldump --no-data..."
         if ! mysqldump --protocol=TCP $ssl -h "$DB_HOST" -P "$DB_PORT" -u "$DB_ADMIN_USER" --no-data "${CLONE_FROM_DB}" >/dev/null 2>&1; then
-          log "STATUS=FAILED (origem '${CLONE_FROM_DB}' não encontrada ou sem acesso)"; : > "$FAIL"; log "==== DB CLONE END ===="; exit 0
+          log "STATUS=FAILED (origem '"'"'${CLONE_FROM_DB}'"'"' não encontrada ou sem acesso)"; : > "$FAIL"; log "==== DB CLONE END ===="; exit 0
         fi
 
         log ">> Criando BD destino (se não existir)..."
@@ -72,7 +82,7 @@ services:
           log "STATUS=FAILED dump/restore rc=$rc $(date -u +%Y-%m-%dT%H:%M:%SZ)"; : > "$FAIL"; log "==== DB CLONE END ===="; exit 0
         fi
 
-        log ">> Clone concluído; agora criar utilizador e permissões..."
+        log ">> Clone concluído; criando utilizador e permissões..."
         mysql --protocol=TCP $ssl -h "$DB_HOST" -P "$DB_PORT" -u "$DB_ADMIN_USER" -e "
           CREATE USER IF NOT EXISTS \`${CLONE_DB_USER}\`@\`%\` IDENTIFIED BY '${CLONE_DB_PASS}';
           GRANT ALL PRIVILEGES ON \`${CLONE_TO_DB}\`.* TO \`${CLONE_DB_USER}\`@\`%\`;
@@ -84,7 +94,7 @@ services:
         exit 0
       '
 
-  # --- Serviço Web (Apache + PHP) ---
+  # ---------- WEB: Apache + PHP ----------
   web:
     build:
       context: .
@@ -100,7 +110,7 @@ services:
       DB_PASS: ${CLONE_DB_PASS}
       TZ: ${TZ:-Europe/Lisbon}
     depends_on:
-      - db-cloner            # aguarda o job mas não depende do exit code
+      - db-cloner        # não bloqueia por exit code; o cloner sempre sai 0
     volumes:
       - clone_status:/var/clone-status:ro
     restart: unless-stopped
