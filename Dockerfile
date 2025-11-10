@@ -1,27 +1,28 @@
-FROM php:8.2-apache
+FROM php:8.2-apache-bullseye
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Sistema + deps de build + libs para GD/ZIP/XML
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 1) Toolchain e libs para compilar extensões (inclui $PHPIZE_DEPS)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
     $PHPIZE_DEPS \
     ca-certificates git unzip curl wget nano vim gosu expect \
     libpng-dev libjpeg62-turbo-dev libfreetype6-dev libwebp-dev \
     libzip-dev libxml2-dev \
- && docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp \
- # use -j1 para reduzir uso de memória no Portainer/buildkit
- && docker-php-ext-install -j1 gd pdo pdo_mysql mysqli mbstring xml zip \
- && a2enmod rewrite headers \
- # limpa toolchains de build p/ imagem menor
- && apt-get purge -y --auto-remove $PHPIZE_DEPS \
  && rm -rf /var/lib/apt/lists/*
 
-# Composer
-RUN php -r "copy('https://getcomposer.org/installer','composer-setup.php');" \
- && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
- && rm composer-setup.php
+# 2) Extensões PHP (usa -j1 para reduzir RAM no builder)
+RUN set -eux; \
+    docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp; \
+    docker-php-ext-install -j1 gd pdo pdo_mysql mysqli mbstring xml zip; \
+    a2enmod rewrite headers
 
-# Apache + php.ini básicos
+# 3) Composer
+RUN php -r "copy('https://getcomposer.org/installer','/tmp/composer-setup.php');" \
+ && php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer \
+ && rm -f /tmp/composer-setup.php
+
+# 4) Apache + php.ini
 RUN printf "ServerName localhost\n" > /etc/apache2/conf-available/servername.conf \
  && a2enconf servername \
  && printf "DirectoryIndex index.php index.html\n" > /etc/apache2/conf-available/dirindex.conf \
@@ -40,7 +41,7 @@ RUN set -eux; \
     sed -i "s~^upload_max_filesize = .*~upload_max_filesize = ${PHP_UPLOAD_MAX_FILESIZE}~" "$PHP_INI_DIR/php.ini"; \
     sed -i "s~;date.timezone =.*~date.timezone = ${TIMEZONE}~" "$PHP_INI_DIR/php.ini"
 
-# Scripts (mantém os teus)
+# 5) Scripts internos
 COPY ./bootstrap.sh /usr/local/bin/bootstrap.sh
 COPY ./src/init-db.php /usr/local/bin/init-db.php
 RUN chmod +x /usr/local/bin/bootstrap.sh /usr/local/bin/init-db.php
