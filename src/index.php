@@ -1,32 +1,35 @@
 <?php
 declare(strict_types=1);
 
-$host = getenv('DB_HOST') ?: '127.0.0.1';
-$port = getenv('DB_PORT') ?: '3306';
-$db   = getenv('DB_NAME') ?: 'test';
-$user = getenv('DB_USER') ?: 'root';
-$pass = getenv('DB_PASS') ?: '';
+echo "<h1>Servidor PHP + Apache ativo ✅</h1>";
 
-$dsn = "mysql:host={$host};port={$port};dbname={$db};charset=utf8mb4";
-$options = [
-    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    PDO::ATTR_TIMEOUT            => 5,
-];
+$host = getenv('DB_HOST');
+$port = getenv('DB_PORT');
+$db   = getenv('DB_NAME');
+$user = getenv('DB_USER');
+$pass = getenv('DB_PASS');
 
-echo "<h1>PHP + Apache + MySQL externo</h1>";
-echo "<p>Tentando ligar a <code>$host:$port/$db</code>...</p>";
+echo "<h3>Variáveis de ambiente</h3><ul>";
+foreach (['DB_HOST' => $host, 'DB_PORT' => $port, 'DB_NAME' => $db, 'DB_USER' => $user, 'TZ' => getenv('TZ')] as $k => $v) {
+    echo "<li><strong>{$k}</strong>: {$v}</li>";
+}
+echo "</ul>";
 
 try {
-    $pdo = new PDO($dsn, $user, $pass, $options);
-    $stmt = $pdo->query('SELECT NOW() AS now, VERSION() AS version');
-    $row = $stmt->fetch();
-    echo "<p><strong>Conectado!</strong></p>";
-    echo "<ul>";
-    echo "<li>Hora do servidor MySQL: <code>{$row['now']}</code></li>";
-    echo "<li>Versão do MySQL: <code>{$row['version']}</code></li>";
-    echo "</ul>";
+    $dsn = "mysql:host={$host};port={$port};dbname={$db};charset=utf8mb4";
+    $pdo = new PDO($dsn, $user, $pass, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    ]);
+
+    $row = $pdo->query('SELECT NOW() AS now, DATABASE() AS dbname, VERSION() AS version')->fetch();
+    echo "<h3>✅ Conexão MySQL OK</h3>";
+    echo "<p>Base: <strong>{$row['dbname']}</strong></p>";
+    echo "<p>Hora MySQL: <strong>{$row['now']}</strong></p>";
+    echo "<p>Versão: <strong>{$row['version']}</strong></p>";
 } catch (Throwable $e) {
-    http_response_code(500);
-    echo "<p style='color:red'><strong>Falha na conexão:</strong> " . htmlspecialchars($e->getMessage()) . "</p>";
+    echo "<h3 style='color:red'>❌ Erro ao conectar ao MySQL</h3>";
+    echo "<pre>" . htmlspecialchars($e->getMessage()) . "</pre>";
 }
+
+echo "<hr><p><small>Container: " . gethostname() . "</small></p>";

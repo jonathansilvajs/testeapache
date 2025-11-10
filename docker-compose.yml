@@ -1,13 +1,19 @@
-version: "3.9"
-
+# docker-compose.yml
 services:
   web:
-    build:
-      context: .          # raiz onde estão Dockerfile e src/
-      dockerfile: Dockerfile
+    build: .
+    container_name: php-apache-web
     ports:
       - "8080:80"
     environment:
+      # Git (clonado apenas uma vez)
+      GIT_REPO: ${GIT_REPO}
+      GIT_REF: ${GIT_REF:-main}
+      # (Opcional) credenciais privadas
+      GIT_USER: ${GIT_USER:-}
+      GIT_TOKEN: ${GIT_TOKEN:-}
+
+      # Configuração da base de dados
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT:-3306}
       DB_NAME: ${DB_NAME}
@@ -15,9 +21,3 @@ services:
       DB_PASS: ${DB_PASS}
       TZ: ${TZ:-Europe/Lisbon}
     restart: unless-stopped
-    # (Opcional) healthcheck simples
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
