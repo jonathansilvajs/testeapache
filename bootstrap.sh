@@ -75,16 +75,19 @@ fi
 # ======================================
 # 3) Clone do código (apenas uma vez)
 # ======================================
-if [ ! -f "$FLAG_BOOT" ]; then
-  echo "==> Primeira inicialização do código (sem .bootstrapped). Preparando diretório…"
-  rm -rf "${APP_DIR:?}/"* "${APP_DIR}/.[!.]*" "${APP_DIR}/..?*" 2>/dev/null || true
-  mkdir -p "${APP_DIR}"
-  chown -R www-data:www-data "${APP_DIR}"
+    if [ ! -f "$FLAG_BOOT" ]; then
+    echo "==> Primeira inicialização do código (sem .bootstrapped). Preparando diretório…"
 
-  echo "==> Clonando ${GIT_REPO} (ref: ${GIT_REF}) para ${APP_DIR}…"
-  # Evita erro de 'dubious ownership' mesmo se algum comando rodar como root
-  git config --global --add safe.directory "${APP_DIR}" || true
-  as_www git clone --depth 1 --branch "${GIT_REF}" "${GIT_REPO_AUTH}" "${APP_DIR}"
+    # Limpa completamente o diretório (inclusive ocultos)
+    find "${APP_DIR}" -mindepth 1 -delete 2>/dev/null || true
+
+    # Garante permissões e existência
+    mkdir -p "${APP_DIR}"
+    chown -R www-data:www-data "${APP_DIR}"
+
+    echo "==> Clonando ${GIT_REPO} (ref: ${GIT_REF}) para ${APP_DIR}…"
+    git config --global --add safe.directory "${APP_DIR}" || true
+    as_www git clone --depth 1 --branch "${GIT_REF}" "${GIT_REPO_AUTH}" "${APP_DIR}"
 
   # ==========================
   # 4) Composer (se existir)
