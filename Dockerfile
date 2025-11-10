@@ -2,24 +2,31 @@ FROM php:8.2-apache
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1) Sistema mínimo e libs necessárias (sem GD)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 1) Ferramentas e libs de build necessárias às extensões
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    $PHPIZE_DEPS \
     ca-certificates git unzip curl wget nano vim gosu expect \
-    libzip-dev libxml2-dev \
+    libzip-dev zlib1g-dev \
+    libxml2-dev \
  && rm -rf /var/lib/apt/lists/*
 
-# 2) Extensões PHP estáveis no Bookworm (sem gd/imagem)
-#    -j1 reduz memória no build (Portainer/BuildKit)
-RUN set -eux; \
-    docker-php-ext-install -j1 pdo pdo_mysql mysqli mbstring xml zip; \
-    a2enmod rewrite headers
+# 2) Extensões PHP — em etapas separadas para identificar falha exata
+# (use -j1 para reduzir RAM no builder do Portainer)
+RUN set -eux; docker-php-ext-install -j1 pdo pdo_mysql mysqli
+RUN set -eux; docker-php-ext-install -j1 mbstring
+RUN set -eux; docker-php-ext-install -j1 xml
+RUN set -eux; docker-php-ext-install -j1 zip
 
-# 3) Composer (oficial)
+# 3) Apache: módulos úteis
+RUN a2enmod rewrite headers
+
+# 4) Composer
 RUN php -r "copy('https://getcomposer.org/installer','/tmp/composer-setup.php');" \
  && php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer \
  && rm -f /tmp/composer-setup.php
 
-# 4) Apache + php.ini
+# 5) Apache + php.ini
 RUN printf "ServerName localhost\n" > /etc/apache2/conf-available/servername.conf \
  && a2enconf servername \
  && printf "DirectoryIndex index.php index.html\n" > /etc/apache2/conf-available/dirindex.conf \
@@ -38,10 +45,14 @@ RUN set -eux; \
     sed -i "s~^upload_max_filesize = .*~upload_max_filesize = ${PHP_UPLOAD_MAX_FILESIZE}~" "$PHP_INI_DIR/php.ini"; \
     sed -i "s~;date.timezone =.*~date.timezone = ${TIMEZONE}~" "$PHP_INI_DIR/php.ini"
 
-# 5) Scripts internos (DB antes do clone, clone 1x, composer)
+# 6) Scripts (DB primeiro; clone 1x; composer)
 COPY ./bootstrap.sh /usr/local/bin/bootstrap.sh
 COPY ./src/init-db.php /usr/local/bin/init-db.php
 RUN chmod +x /usr/local/bin/bootstrap.sh /usr/local/bin/init-db.php
+
+# 7) Limpeza dos toolchains (imagem menor)
+RUN apt-get purge -y --auto-remove $PHPIZE_DEPS \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /var/www/html
 CMD ["/usr/local/bin/bootstrap.sh"]
