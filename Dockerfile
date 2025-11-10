@@ -1,6 +1,6 @@
 FROM php:8.2-apache
 
-# Pacotes de sistema + Git + Composer deps
+# Sistema + libs + git + unzip + gosu
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git ca-certificates unzip \
     libzip-dev \
@@ -8,17 +8,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
  && rm -rf /var/lib/apt/lists/*
 
-# Extensões PHP necessárias
-# zip
-RUN docker-php-ext-install zip
-# gd (com jpeg/freetype/webp)
-RUN docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp \
- && docker-php-ext-install gd
-# MySQL
-RUN docker-php-ext-install pdo pdo_mysql mysqli \
+# Extensões PHP: zip, gd (com jpeg/freetype/webp), mysql, etc.
+RUN docker-php-ext-install zip \
+ && docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp \
+ && docker-php-ext-install gd \
+ && docker-php-ext-install pdo pdo_mysql mysqli \
  && a2enmod rewrite
 
-# Composer (instalador oficial)
+# Composer (oficial)
 RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
  && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
  && rm composer-setup.php
@@ -31,8 +28,9 @@ RUN printf "ServerName localhost\n" > /etc/apache2/conf-available/servername.con
 
 ENV TZ=Europe/Lisbon
 
-# Entrypoint
+# Scripts internos (independentes do repo)
 COPY ./bootstrap.sh /usr/local/bin/bootstrap.sh
+COPY ./init-db.php  /usr/local/bin/init-db.php
 RUN chmod +x /usr/local/bin/bootstrap.sh
 
 CMD ["/usr/local/bin/bootstrap.sh"]

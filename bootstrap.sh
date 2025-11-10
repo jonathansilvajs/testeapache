@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# --- Config e flags ---
 : "${GIT_REPO:?Defina GIT_REPO (ex: https://...git ou git@...)}"
 GIT_REF="${GIT_REF:-main}"
 APP_DIR="/var/www/html"
@@ -18,28 +19,58 @@ else
   GIT_REPO_AUTH="${GIT_REPO}"
 fi
 
-echo "==> Bootstrap em ${APP_DIR}"
+echo "==> Início do bootstrap (DB -> clone -> composer) em ${APP_DIR}"
 
-# Função para rodar comandos como www-data (evita 'dubious ownership')
+# Utilitário: executar como www-data (evita 'dubious ownership' do git)
 as_www() { gosu www-data:www-data "$@"; }
 
-# 1) Clone apenas uma vez
-if [ ! -f "$FLAG_BOOT" ]; then
-  echo "==> Primeira inicialização (sem .bootstrapped)"
+# --- 1) Esperar DB opcionalmente ---
+DB_WAIT_MAX="${DB_WAIT_MAX:-60}"   # segundos
+if [[ "${WAIT_FOR_DB:-true}" == "true" ]]; then
+  echo "==> Aguardar MySQL até ${DB_WAIT_MAX}s em ${DB_HOST}:${DB_PORT:-3306}..."
+  end=$((SECONDS+DB_WAIT_MAX))
+  ok=false
+  while [ $SECONDS -lt $end ]; do
+    if php -r '
+      $h=getenv("DB_HOST")?: "127.0.0.1";
+      $p=getenv("DB_PORT")?: "3306";
+      $u=getenv("DB_USER")?: "root";
+      $pw=getenv("DB_PASS")?: "";
+      try { new PDO("mysql:host=$h;port=$p",$u,$pw); exit(0);} catch(Throwable $e){ exit(1);}
+    '; then ok=true; break; fi
+    sleep 2
+  done
+  $ok || echo "Aviso: Não foi possível confirmar a disponibilidade do MySQL, prosseguindo..."
+fi
 
-  # Limpa e clona (como www-data)
+# --- 2) CRIAR/DUPLICAR DB ANTES DE TUDO (idempotente) ---
+if [[ "${RUN_INIT_DB:-true}" == "true" ]]; then
+  if [[ "${FORCE_DB_INIT:-false}" == "true" || ! -f "$FLAG_DB" ]]; then
+    echo "==> Executando init-db.php (criação/duplicação de DB)..."
+    if php /usr/local/bin/init-db.php; then
+      date > "$FLAG_DB"
+    else
+      echo "Aviso: init-db.php retornou erro; ver logs."
+    fi
+  else
+    echo "==> DB já inicializada anteriormente; pulando init-db."
+  fi
+fi
+
+# --- 3) CLONE apenas uma vez ---
+if [ ! -f "$FLAG_BOOT" ]; then
+  echo "==> Primeira inicialização do código (sem .bootstrapped)."
   rm -rf "${APP_DIR:?}/"* "${APP_DIR}/.[!.]*" "${APP_DIR}/..?*" 2>/dev/null || true
   mkdir -p "${APP_DIR}"
   chown -R www-data:www-data "${APP_DIR}"
 
   echo "==> Clonando ${GIT_REPO} (ref: ${GIT_REF})..."
-  # Evita erro 'dubious ownership' mesmo se git rodar como root em algum momento
   git config --global --add safe.directory "${APP_DIR}" || true
   as_www git clone --depth 1 --branch "${GIT_REF}" "${GIT_REPO_AUTH}" "${APP_DIR}"
 
-  # 2) Composer (se existir) — como www-data
+  # --- 4) Composer (se existir) ---
   if [ -f "${APP_DIR}/composer.json" ]; then
-    echo "==> composer.json encontrado, instalando dependências..."
+    echo "==> composer.json encontrado; instalando dependências..."
     export COMPOSER_ALLOW_SUPERUSER=1
     if [[ "${COMPOSER_UPDATE:-false}" == "true" ]]; then
       as_www bash -lc "cd '${APP_DIR}' && composer update --no-interaction --no-progress --prefer-dist"
@@ -51,20 +82,10 @@ if [ ! -f "$FLAG_BOOT" ]; then
       fi
     fi
   else
-    echo "==> composer.json não encontrado — ignorando Composer."
+    echo "==> composer.json não encontrado; ignorando Composer."
   fi
 
-  # 3) Inicialização de DB idempotente (opcional)
-  if [[ "${RUN_INIT_DB:-true}" == "true" && ! -f "$FLAG_DB" && -f "${APP_DIR}/init-db.php" ]]; then
-    echo "==> Executando init-db.php (duplicação de base, se necessário)..."
-    if php "${APP_DIR}/init-db.php"; then
-      date > "$FLAG_DB"
-    else
-      echo "Aviso: init-db.php retornou erro; ver logs."
-    fi
-  fi
-
-  # Grava metadados de bootstrap
+  # Grava metadados do bootstrap do código
   (
     cd "${APP_DIR}" 2>/dev/null || exit 0
     printf "bootstrapped_at=%s\n" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > "$FLAG_BOOT"
@@ -74,12 +95,7 @@ if [ ! -f "$FLAG_BOOT" ]; then
     fi
   )
 else
-  echo "==> Já inicializado anteriormente; clone/composer não serão repetidos."
-  # Caso precise forçar DB novamente
-  if [[ "${FORCE_DB_INIT:-false}" == "true" && -f "${APP_DIR}/init-db.php" ]]; then
-    echo "==> FORCING init-db.php..."
-    php "${APP_DIR}/init-db.php" && date > "$FLAG_DB" || echo "Aviso: init-db.php falhou; ver logs."
-  fi
+  echo "==> Código já bootstrapped; clone/composer não serão repetidos."
 fi
 
 echo "==> Iniciando Apache..."
