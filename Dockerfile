@@ -4,20 +4,19 @@ FROM php:8.2-apache
 # 1) Sistema + dependências
 # =========================
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates unzip \
-    libzip-dev \
-    libpng-dev libjpeg62-turbo-dev libfreetype6-dev libwebp-dev \
-    gosu \
+    ca-certificates apt-transport-https software-properties-common \
+    git unzip curl wget vim nano gosu expect \
+    libzip-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev libwebp-dev \
+    libc-client-dev libkrb5-dev libxml2-dev libonig-dev \
  && rm -rf /var/lib/apt/lists/*
 
 # =========================
-# 2) Extensões PHP
+# 2) Extensões PHP 8.2
 # =========================
-RUN docker-php-ext-install zip \
- && docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp \
- && docker-php-ext-install gd \
- && docker-php-ext-install pdo pdo_mysql mysqli \
- && a2enmod rewrite
+# As que correspondem ao teu pedido: xml, zip, curl, imap, gd, mysql, mbstring
+RUN docker-php-ext-configure imap --with-kerberos --with-imap-ssl \
+ && docker-php-ext-install pdo pdo_mysql mysqli mbstring curl gd xml zip imap \
+ && a2enmod rewrite headers
 
 # =========================
 # 3) Composer (instalador oficial)
@@ -34,22 +33,33 @@ RUN printf "ServerName localhost\n" > /etc/apache2/conf-available/servername.con
  && printf "DirectoryIndex index.php index.html\n" > /etc/apache2/conf-available/dirindex.conf \
  && a2enconf dirindex
 
-# Define timezone
+# =========================
+# 5) Configurações do PHP.ini
+# =========================
 ENV TZ=Europe/Lisbon
+ENV PHP_MEMORY_LIMIT=512M
+ENV PHP_POST_MAX_SIZE=64M
+ENV PHP_UPLOAD_MAX_FILESIZE=64M
+ENV TIMEZONE=Europe/Lisbon
+
+RUN set -eux; \
+    PHP_INI="$PHP_INI_DIR/php.ini-production"; \
+    cp "$PHP_INI" "$PHP_INI_DIR/php.ini"; \
+    sed -i "s~^memory_limit = .*~memory_limit = ${PHP_MEMORY_LIMIT}~" "$PHP_INI_DIR/php.ini"; \
+    sed -i "s~^post_max_size = .*~post_max_size = ${PHP_POST_MAX_SIZE}~" "$PHP_INI_DIR/php.ini"; \
+    sed -i "s~^upload_max_filesize = .*~upload_max_filesize = ${PHP_UPLOAD_MAX_FILESIZE}~" "$PHP_INI_DIR/php.ini"; \
+    sed -i "s~;date.timezone =.*~date.timezone = ${TIMEZONE}~" "$PHP_INI_DIR/php.ini"
 
 # =========================
-# 5) Scripts internos
+# 6) Scripts internos (init e bootstrap)
 # =========================
-# Copia os scripts do teu repositório
 COPY ./bootstrap.sh /usr/local/bin/bootstrap.sh
 COPY ./src/init-db.php /usr/local/bin/init-db.php
-
-# Permissões de execução
 RUN chmod +x /usr/local/bin/bootstrap.sh /usr/local/bin/init-db.php \
  && chown www-data:www-data /usr/local/bin/bootstrap.sh /usr/local/bin/init-db.php
 
 # =========================
-# 6) Workdir e entrypoint
+# 7) Workdir e entrypoint
 # =========================
 WORKDIR /var/www/html
 CMD ["/usr/local/bin/bootstrap.sh"]
