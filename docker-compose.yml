@@ -1,27 +1,31 @@
 services:
   web:
     build: .
-    container_name: php-apache-web
     ports:
       - "8080:80"
     environment:
-      # Git (clonado uma vez)
       GIT_REPO: ${GIT_REPO}
       GIT_REF: ${GIT_REF:-main}
-      GIT_USER: ${GIT_USER:-}
-      GIT_TOKEN: ${GIT_TOKEN:-}
-
-      # DB (criada/duplicada ANTES do clone)
+      # DB + init flags
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT:-3306}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASS: ${DB_PASS}
-      SOURCE_DB: ${SOURCE_DB:-}        # << opcional, ex.: somniacrm
       RUN_INIT_DB: ${RUN_INIT_DB:-true}
-      FORCE_DB_INIT: ${FORCE_DB_INIT:-false}
+      SOURCE_DB: ${SOURCE_DB:-}
+      # Composer
+      COMPOSER_UPDATE: ${COMPOSER_UPDATE:-false}
+      COMPOSER_DEV: ${COMPOSER_DEV:-false}
+      FORCE_COMPOSER_INSTALL: ${FORCE_COMPOSER_INSTALL:-false}
+      # Wait DB
       WAIT_FOR_DB: ${WAIT_FOR_DB:-true}
       DB_WAIT_MAX: ${DB_WAIT_MAX:-60}
-
-      TZ: ${TZ:-Europe/Lisbon}
+    volumes:
+      - app_code:/var/www/html     # código persiste
+      - app_state:/var/lib/app     # flags/estado persistem
     restart: unless-stopped
+
+volumes:
+  app_code:
+  app_state:
