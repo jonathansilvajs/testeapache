@@ -7,6 +7,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
  && docker-php-ext-install pdo pdo_mysql mysqli \
  && a2enmod rewrite
 
+# Instala o Composer (versão estável)
+RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
+ && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
+ && rm composer-setup.php
+
 # Silencia o aviso de ServerName e define um DirectoryIndex padrão
 RUN printf "ServerName localhost\n" > /etc/apache2/conf-available/servername.conf \
  && a2enconf servername \
