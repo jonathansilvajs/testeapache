@@ -2,31 +2,33 @@ FROM php:8.2-apache
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Dependências de sistema
+# --- Sistema e libs ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git unzip curl wget vim nano gosu expect \
-    libzip-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev libwebp-dev libxml2-dev libkrb5-dev \
- && docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp \
- && docker-php-ext-install pdo pdo_mysql mysqli mbstring curl gd xml zip \
- && a2enmod rewrite headers \
+    ca-certificates git unzip curl wget nano vim gosu expect \
+    libpng-dev libjpeg-dev libfreetype-dev libwebp-dev libzip-dev libxml2-dev \
  && rm -rf /var/lib/apt/lists/*
 
-# Composer
-RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
+# --- Extensões PHP (todas estáveis no Bookworm) ---
+RUN docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp \
+ && docker-php-ext-install -j$(nproc) gd pdo pdo_mysql mysqli mbstring xml zip \
+ && a2enmod rewrite headers
+
+# --- Composer ---
+RUN php -r "copy('https://getcomposer.org/installer','composer-setup.php');" \
  && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
  && rm composer-setup.php
 
-# Apache e PHP.ini
+# --- Apache / PHP.ini ---
 RUN printf "ServerName localhost\n" > /etc/apache2/conf-available/servername.conf \
  && a2enconf servername \
  && printf "DirectoryIndex index.php index.html\n" > /etc/apache2/conf-available/dirindex.conf \
  && a2enconf dirindex
 
-ENV TZ=Europe/Lisbon
-ENV PHP_MEMORY_LIMIT=512M
-ENV PHP_POST_MAX_SIZE=64M
-ENV PHP_UPLOAD_MAX_FILESIZE=64M
-ENV TIMEZONE=Europe/Lisbon
+ENV TZ=Europe/Lisbon \
+    PHP_MEMORY_LIMIT=512M \
+    PHP_POST_MAX_SIZE=64M \
+    PHP_UPLOAD_MAX_FILESIZE=64M \
+    TIMEZONE=Europe/Lisbon
 
 RUN set -eux; \
     cp "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"; \
@@ -35,6 +37,7 @@ RUN set -eux; \
     sed -i "s~^upload_max_filesize = .*~upload_max_filesize = ${PHP_UPLOAD_MAX_FILESIZE}~" "$PHP_INI_DIR/php.ini"; \
     sed -i "s~;date.timezone =.*~date.timezone = ${TIMEZONE}~" "$PHP_INI_DIR/php.ini"
 
+# --- Scripts internos ---
 COPY ./bootstrap.sh /usr/local/bin/bootstrap.sh
 COPY ./src/init-db.php /usr/local/bin/init-db.php
 RUN chmod +x /usr/local/bin/bootstrap.sh /usr/local/bin/init-db.php
