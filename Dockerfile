@@ -30,7 +30,8 @@ ENV TZ=Europe/Lisbon
 
 # Scripts internos (independentes do repo)
 COPY ./bootstrap.sh /usr/local/bin/bootstrap.sh
-COPY ./init-db.php  /usr/local/bin/init-db.php
+COPY ./src/init-db.php /usr/local/bin/init-db.php
+RUN chmod +x /usr/local/bin/init-db.php
 RUN chmod +x /usr/local/bin/bootstrap.sh
 
 CMD ["/usr/local/bin/bootstrap.sh"]
