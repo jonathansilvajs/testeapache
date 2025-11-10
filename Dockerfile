@@ -1,11 +1,12 @@
 FROM php:8.2-apache
 
+
+ENV DEBIAN_FRONTEND=noninteractive
 # =========================
 # 1) Sistema + dependências
 # =========================
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates software-properties-common \
-    git unzip curl wget vim nano gosu expect \
+    ca-certificates git unzip curl wget vim nano gosu expect \
     libzip-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev libwebp-dev \
     libkrb5-dev libxml2-dev \
  && rm -rf /var/lib/apt/lists/*
