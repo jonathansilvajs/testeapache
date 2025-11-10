@@ -3,7 +3,7 @@ version: "3.8"
 services:
   web:
     build:
-      context: .                 # diretório com Dockerfile (bullseye)
+      context: .
       dockerfile: Dockerfile
     container_name: php-apache-web
     ports:
@@ -43,7 +43,6 @@ services:
       - app_state:/var/lib/app     # flags/estado do bootstrap e DB
     restart: unless-stopped
 
-    # Healthcheck simples
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost/"]
       interval: 30s
