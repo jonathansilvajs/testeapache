@@ -1,30 +1,54 @@
+version: "3.8"
+
 services:
   web:
-    build: .
+    build:
+      context: .                 # diretório com Dockerfile (bullseye)
+      dockerfile: Dockerfile
+    container_name: php-apache-web
     ports:
       - "8080:80"
     environment:
+      # Git (clona só na 1ª vez; depois usa volume)
       GIT_REPO: ${GIT_REPO}
       GIT_REF: ${GIT_REF:-main}
-      # DB + init flags
+      GIT_USER: ${GIT_USER:-}
+      GIT_TOKEN: ${GIT_TOKEN:-}
+
+      # Base de dados (init-db.php roda ANTES do clone)
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT:-3306}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASS: ${DB_PASS}
+      SOURCE_DB: ${SOURCE_DB:-}          # ex.: somniacrm
       RUN_INIT_DB: ${RUN_INIT_DB:-true}
-      SOURCE_DB: ${SOURCE_DB:-}
-      # Composer
+      FORCE_DB_INIT: ${FORCE_DB_INIT:-false}
+      WAIT_FOR_DB: ${WAIT_FOR_DB:-true}
+      DB_WAIT_MAX: ${DB_WAIT_MAX:-60}
+
+      # PHP.ini
+      PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-512M}
+      PHP_POST_MAX_SIZE: ${PHP_POST_MAX_SIZE:-64M}
+      PHP_UPLOAD_MAX_FILESIZE: ${PHP_UPLOAD_MAX_FILESIZE:-64M}
+      TIMEZONE: ${TIMEZONE:-Europe/Lisbon}
+
+      # Composer (opcionais)
       COMPOSER_UPDATE: ${COMPOSER_UPDATE:-false}
       COMPOSER_DEV: ${COMPOSER_DEV:-false}
       FORCE_COMPOSER_INSTALL: ${FORCE_COMPOSER_INSTALL:-false}
-      # Wait DB
-      WAIT_FOR_DB: ${WAIT_FOR_DB:-true}
-      DB_WAIT_MAX: ${DB_WAIT_MAX:-60}
+
     volumes:
-      - app_code:/var/www/html     # código persiste
-      - app_state:/var/lib/app     # flags/estado persistem
+      - app_code:/var/www/html     # código persiste (não é reescrito nos restarts)
+      - app_state:/var/lib/app     # flags/estado do bootstrap e DB
     restart: unless-stopped
+
+    # Healthcheck simples
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
 
 volumes:
   app_code:
