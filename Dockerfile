@@ -1,29 +1,38 @@
-# Dockerfile
 FROM php:8.2-apache
 
-# Instala git e extensões PHP
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
- && rm -rf /var/lib/apt/lists/* \
- && docker-php-ext-install pdo pdo_mysql mysqli \
+# Pacotes de sistema + Git + Composer deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git ca-certificates unzip \
+    libzip-dev \
+    libpng-dev libjpeg62-turbo-dev libfreetype6-dev libwebp-dev \
+    gosu \
+ && rm -rf /var/lib/apt/lists/*
+
+# Extensões PHP necessárias
+# zip
+RUN docker-php-ext-install zip
+# gd (com jpeg/freetype/webp)
+RUN docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp \
+ && docker-php-ext-install gd
+# MySQL
+RUN docker-php-ext-install pdo pdo_mysql mysqli \
  && a2enmod rewrite
 
-# Instala o Composer (versão estável)
+# Composer (instalador oficial)
 RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
  && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
  && rm composer-setup.php
 
-# Silencia o aviso de ServerName e define um DirectoryIndex padrão
+# Apache: ServerName + DirectoryIndex
 RUN printf "ServerName localhost\n" > /etc/apache2/conf-available/servername.conf \
  && a2enconf servername \
  && printf "DirectoryIndex index.php index.html\n" > /etc/apache2/conf-available/dirindex.conf \
  && a2enconf dirindex
 
-# Timezone
 ENV TZ=Europe/Lisbon
 
-# Copia o entrypoint customizado
+# Entrypoint
 COPY ./bootstrap.sh /usr/local/bin/bootstrap.sh
 RUN chmod +x /usr/local/bin/bootstrap.sh
 
-# Comando de inicialização (clona só uma vez e inicia o Apache)
 CMD ["/usr/local/bin/bootstrap.sh"]
