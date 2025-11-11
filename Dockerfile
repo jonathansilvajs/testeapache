@@ -2,7 +2,7 @@ FROM php:8.2-apache
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1) Toolchains de build + libs necessárias (inclui oniguruma e deps do GD)
+# 1) Toolchains de build + libs necessárias (GD, mbstring, zip, xml, Firebird)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
     $PHPIZE_DEPS \
@@ -11,6 +11,7 @@ RUN apt-get update \
     libxml2-dev \
     libonig-dev \
     libjpeg62-turbo-dev libfreetype6-dev libpng-dev libwebp-dev \
+    firebird-dev libfbclient2 \
  && rm -rf /var/lib/apt/lists/*
 
 # 2) Extensões PHP em passos separados (usa -j1 para reduzir RAM)
@@ -30,6 +31,12 @@ RUN set -eux; docker-php-ext-install -j1 mbstring || { \
       find /usr/src -name "config.log" -maxdepth 5 2>/dev/null | xargs -r tail -n +1; \
       exit 1; \
     }
+
+# 5) Interbase/Firebird (client nativo + extensões PHP)
+RUN set -eux; \
+    docker-php-ext-configure interbase --with-interbase=/usr/include/firebird; \
+    docker-php-ext-install -j1 interbase pdo_firebird
+
 
 # (Opcional) Limpar toolchains de build para reduzir a imagem
 # RUN apt-get purge -y --auto-remove $PHPIZE_DEPS && rm -rf /var/lib/apt/lists/*
