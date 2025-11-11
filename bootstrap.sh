@@ -171,4 +171,8 @@ if [[ "${APACHE_DOCUMENT_ROOT}" != "/var/www/html" ]]; then
 fi
 
 echo "==> Iniciando Apache…"
-exec apache2-foreground
+if command -v apache2-foreground >/dev/null 2>&1; then
+  exec apache2-foreground
+else
+  exec apache2ctl -D FOREGROUND
+fi
