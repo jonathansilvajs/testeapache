@@ -7,9 +7,10 @@ set -euo pipefail
 : "${GIT_REPO:?Defina GIT_REPO (https://...git ou git@...)}"
 GIT_REF="${GIT_REF:-main}"
 
-APP_DIR="/var/www/html"      # código persiste aqui (volume app_code)
-STATE_DIR="/var/lib/app"     # flags/estado persistem aqui (volume app_state)
-mkdir -p "$STATE_DIR"
+# Raízes e estado (código persiste aqui; flags aqui)
+APP_ROOT="/var/www/html"
+STATE_DIR="/var/lib/app"
+mkdir -p "${STATE_DIR}"
 
 FLAG_BOOT="${STATE_DIR}/.bootstrapped"
 FLAG_DB="${STATE_DIR}/.db_initialized"
@@ -19,13 +20,29 @@ WAIT_FOR_DB="${WAIT_FOR_DB:-true}"
 DB_WAIT_MAX="${DB_WAIT_MAX:-60}"
 
 # Composer flags
-COMPOSER_UPDATE="${COMPOSER_UPDATE:-false}"     # true => composer update
-COMPOSER_DEV="${COMPOSER_DEV:-false}"           # true => instala dev
-FORCE_COMPOSER_INSTALL="${FORCE_COMPOSER_INSTALL:-false}"  # força composer no restart
+COMPOSER_UPDATE="${COMPOSER_UPDATE:-false}"          # true => composer update
+COMPOSER_DEV="${COMPOSER_DEV:-false}"                # true => instala dev
+FORCE_COMPOSER_INSTALL="${FORCE_COMPOSER_INSTALL:-false}"
 
 # Init DB control
 RUN_INIT_DB="${RUN_INIT_DB:-true}"
 FORCE_DB_INIT="${FORCE_DB_INIT:-false}"
+
+# Nome da app/pasta destino:
+# - se GIT_APP_NAME vier no .env, usamos
+# - caso contrário, inferimos do URL (basename sem .git)
+if [[ -n "${GIT_APP_NAME:-}" ]]; then
+  APP_NAME="${GIT_APP_NAME}"
+else
+  # remove credenciais/fragmentos e pega o basename sem .git
+  CLEAN_URL="${GIT_REPO#*@}"; CLEAN_URL="${CLEAN_URL#https://}"; CLEAN_URL="${CLEAN_URL#http://}"
+  BASENAME="${CLEAN_URL##*/}"
+  APP_NAME="${BASENAME%.git}"
+fi
+APP_DIR="${APP_ROOT}/${APP_NAME}"
+
+# DocumentRoot do Apache (pode apontar para subpastas, ex.: ${APP_DIR}/public)
+APACHE_DOCUMENT_ROOT="${APACHE_DOCUMENT_ROOT:-$APP_DIR}"
 
 # Git auth (HTTPS + token)
 if [[ -n "${GIT_TOKEN:-}" && "${GIT_REPO}" =~ ^https:// ]]; then
@@ -81,14 +98,15 @@ fi
 # ======================================
 if [ ! -f "$FLAG_BOOT" ]; then
   echo "==> Primeira inicialização do código."
+  mkdir -p "${APP_DIR}"
+  chown -R www-data:www-data "${APP_ROOT}"
+
   if [ -z "$(ls -A "$APP_DIR" 2>/dev/null)" ]; then
-    echo "==> Diretório vazio; clonando ${GIT_REPO} (ref: ${GIT_REF})…"
-    mkdir -p "${APP_DIR}"
-    chown -R www-data:www-data "${APP_DIR}"
+    echo "==> Diretório alvo vazio; clonando ${GIT_REPO} (ref: ${GIT_REF}) em ${APP_DIR}…"
     git config --global --add safe.directory "${APP_DIR}" || true
     as_www git clone --depth 1 --branch "${GIT_REF}" "${GIT_REPO_AUTH}" "${APP_DIR}"
   else
-    echo "==> Diretório já tem conteúdo; NÃO vou clonar."
+    echo "==> ${APP_DIR} já tem conteúdo; NÃO vou clonar."
   fi
 
   # ==========================
@@ -111,20 +129,17 @@ if [ ! -f "$FLAG_BOOT" ]; then
     echo "==> composer.json não encontrado; a etapa Composer foi ignorada."
   fi
 
-  # Regista metadados de bootstrap do código
-  (
-    cd "${APP_DIR}" 2>/dev/null || exit 0
-    printf "bootstrapped_at=%s\n" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > "${FLAG_BOOT}"
-    if command -v git >/dev/null 2>&1 && [ -d .git ]; then
-      COMMIT_ID="$(as_www git -C '${APP_DIR}' rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
-      printf "remote=%s\nref=%s\ncommit=%s\n" "${GIT_REPO}" "${GIT_REF}" "${COMMIT_ID}" >> "${FLAG_BOOT}"
-    fi
-  )
+  # Regista metadados do bootstrap do código
+  printf "bootstrapped_at=%s\n" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > "${STATE_DIR}/.bootstrapped"
+  printf "app_dir=%s\n" "${APP_DIR}" >> "${STATE_DIR}/.bootstrapped"
+  printf "remote=%s\nref=%s\n" "${GIT_REPO}" "${GIT_REF}" >> "${STATE_DIR}/.bootstrapped"
+  if command -v git >/dev/null 2>&1 && [ -d "${APP_DIR}/.git" ]; then
+    as_www git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null | xargs -I{} printf "commit=%s\n" {} >> "${STATE_DIR}/.bootstrapped"
+  fi
 else
-  echo "==> Restart/novo run detectado: .bootstrapped existe. Não vou clonar nem limpar."
-  # (Opcional) Forçar composer num restart
+  echo "==> Restart/novo run: .bootstrapped existe. Não vou clonar nem limpar."
   if [[ "${FORCE_COMPOSER_INSTALL}" == "true" && -f "${APP_DIR}/composer.json" ]]; then
-    echo "==> FORCE_COMPOSER_INSTALL=true — executando composer install/update…"
+    echo "==> FORCE_COMPOSER_INSTALL=true — executando composer…"
     export COMPOSER_ALLOW_SUPERUSER=1
     if [[ "${COMPOSER_UPDATE}" == "true" ]]; then
       as_www bash -lc "cd '${APP_DIR}' && COMPOSER_MEMORY_LIMIT=-1 composer update --no-interaction --no-progress --prefer-dist"
@@ -136,6 +151,22 @@ else
       fi
     fi
     chown -R www-data:www-data "${APP_DIR}/vendor" || true
+  fi
+fi
+
+# ======================================
+# 5) Ajustar DocumentRoot do Apache
+# ======================================
+# Se o APACHE_DOCUMENT_ROOT não for o padrão (/var/www/html), reescreve confs
+if [[ "${APACHE_DOCUMENT_ROOT}" != "/var/www/html" ]]; then
+  echo "==> Configurando Apache DocumentRoot para: ${APACHE_DOCUMENT_ROOT}"
+  # Garante que a pasta existe (ex.: /var/www/html/minhaapp/public)
+  mkdir -p "${APACHE_DOCUMENT_ROOT}"
+  chown -R www-data:www-data "${APACHE_DOCUMENT_ROOT}"
+  sed -ri "s#DocumentRoot /var/www/html#DocumentRoot ${APACHE_DOCUMENT_ROOT}#g" /etc/apache2/sites-available/000-default.conf
+  # Diretiva <Directory> (evita 403)
+  if grep -q "<Directory /var/www/>" /etc/apache2/apache2.conf; then
+    sed -ri "s#<Directory /var/www/>#<Directory ${APACHE_DOCUMENT_ROOT%/*}/>#" /etc/apache2/apache2.conf
   fi
 fi
 
